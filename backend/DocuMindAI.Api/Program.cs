@@ -1,5 +1,8 @@
 using System.Text;
+
 using DocuMindAI.Api.Data;
+using DocuMindAI.Api.Services;
+
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -8,15 +11,52 @@ using Microsoft.OpenApi;
 var builder = WebApplication.CreateBuilder(args);
 
 // =====================================================
-// JWT SECRET
+// CONFIGURATION
 // =====================================================
 
-var jwtSecret = builder.Configuration["Jwt:Secret"];
+var configuration = builder.Configuration;
+
+
+// =====================================================
+// JWT CONFIGURATION
+// =====================================================
+
+var jwtSecret = configuration["Jwt:Secret"];
+var jwtIssuer = configuration["Jwt:Issuer"];
+var jwtAudience = configuration["Jwt:Audience"];
 
 if (string.IsNullOrWhiteSpace(jwtSecret))
 {
     throw new InvalidOperationException(
-        "JWT secret is not configured."
+        "Jwt:Secret is not configured."
+    );
+}
+
+if (string.IsNullOrWhiteSpace(jwtIssuer))
+{
+    throw new InvalidOperationException(
+        "Jwt:Issuer is not configured."
+    );
+}
+
+if (string.IsNullOrWhiteSpace(jwtAudience))
+{
+    throw new InvalidOperationException(
+        "Jwt:Audience is not configured."
+    );
+}
+
+
+// =====================================================
+// JWT SECRET VALIDATION
+// =====================================================
+
+var jwtKeyBytes = Encoding.UTF8.GetBytes(jwtSecret);
+
+if (jwtKeyBytes.Length < 32)
+{
+    throw new InvalidOperationException(
+        "Jwt:Secret must be at least 32 characters long."
     );
 }
 
@@ -25,10 +65,20 @@ if (string.IsNullOrWhiteSpace(jwtSecret))
 // DATABASE - SUPABASE POSTGRESQL
 // =====================================================
 
+var connectionString =
+    configuration.GetConnectionString("DefaultConnection");
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:DefaultConnection is not configured."
+    );
+}
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection")
-    ));
+{
+    options.UseNpgsql(connectionString);
+});
 
 
 // =====================================================
@@ -36,29 +86,31 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // =====================================================
 
 builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddAuthentication(
+        JwtBearerDefaults.AuthenticationScheme
+    )
     .AddJwtBearer(options =>
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuerSigningKey = true,
+        options.TokenValidationParameters =
+            new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
 
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtSecret)
-            ),
+                IssuerSigningKey =
+                    new SymmetricSecurityKey(jwtKeyBytes),
 
-            ValidateIssuer = true,
+                ValidateIssuer = true,
 
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                ValidIssuer = jwtIssuer,
 
-            ValidateAudience = true,
+                ValidateAudience = true,
 
-            ValidAudience = builder.Configuration["Jwt:Audience"],
+                ValidAudience = jwtAudience,
 
-            ValidateLifetime = true,
+                ValidateLifetime = true,
 
-            ClockSkew = TimeSpan.FromMinutes(1)
-        };
+                ClockSkew = TimeSpan.FromMinutes(1)
+            };
     });
 
 
@@ -77,6 +129,89 @@ builder.Services.AddControllers();
 
 
 // =====================================================
+// APPLICATION SERVICES
+// =====================================================
+
+// JWT Service
+builder.Services.AddScoped<JwtService>();
+
+// Storage Service
+builder.Services.AddScoped<StorageService>();
+
+// PDF Text Extractor
+builder.Services.AddScoped<PdfTextExtractor>();
+
+
+// =====================================================
+// HTTP CLIENT
+// =====================================================
+
+builder.Services.AddHttpClient();
+
+
+// =====================================================
+// SUPABASE CONFIGURATION
+// =====================================================
+
+var supabaseUrl =
+    configuration["Supabase:Url"];
+
+var supabaseSecretKey =
+    configuration["Supabase:SecretKey"];
+
+if (string.IsNullOrWhiteSpace(supabaseUrl))
+{
+    throw new InvalidOperationException(
+        "Supabase:Url is not configured."
+    );
+}
+
+if (string.IsNullOrWhiteSpace(supabaseSecretKey))
+{
+    throw new InvalidOperationException(
+        "Supabase:SecretKey is not configured."
+    );
+}
+
+
+// =====================================================
+// SUPABASE CLIENT
+// =====================================================
+
+var supabaseClient =
+    new Supabase.Client(
+        supabaseUrl,
+        supabaseSecretKey
+    );
+
+await supabaseClient.InitializeAsync();
+
+builder.Services.AddSingleton(supabaseClient);
+
+
+// =====================================================
+// CORS
+// =====================================================
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(
+        "AllowFrontend",
+        policy =>
+        {
+            policy
+                .WithOrigins(
+                    "http://localhost:3000",
+                    "https://localhost:3000"
+                )
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+        }
+    );
+});
+
+
+// =====================================================
 // SWAGGER / OPENAPI
 // =====================================================
 
@@ -84,6 +219,10 @@ builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddSwaggerGen(options =>
 {
+    // -------------------------------------------------
+    // Swagger Document
+    // -------------------------------------------------
+
     options.SwaggerDoc(
         "v1",
         new OpenApiInfo
@@ -94,8 +233,9 @@ builder.Services.AddSwaggerGen(options =>
         }
     );
 
+
     // -------------------------------------------------
-    // JWT Bearer Authentication in Swagger
+    // JWT Bearer Authentication
     // -------------------------------------------------
 
     options.AddSecurityDefinition(
@@ -103,25 +243,42 @@ builder.Services.AddSwaggerGen(options =>
         new OpenApiSecurityScheme
         {
             Name = "Authorization",
+
             Type = SecuritySchemeType.Http,
+
             Scheme = "bearer",
+
             BearerFormat = "JWT",
+
             In = ParameterLocation.Header,
+
             Description =
-                "Enter your JWT token."
+                "Enter your JWT token. Example: Bearer {token}"
         }
     );
 
-    options.AddSecurityRequirement(document =>
-        new OpenApiSecurityRequirement
-        {
-            [
-                new OpenApiSecuritySchemeReference(
-                    "Bearer",
-                    document
-                )
-            ] = []
-        }
+
+    // -------------------------------------------------
+    // JWT Security Requirement
+    // -------------------------------------------------
+    //
+    // IMPORTANT:
+    // Swashbuckle 10.x requires a function here.
+    //
+
+    options.AddSecurityRequirement(
+        document =>
+            new OpenApiSecurityRequirement
+            {
+                {
+                    new OpenApiSecuritySchemeReference(
+                        "Bearer",
+                        document
+                    ),
+
+                    new List<string>()
+                }
+            }
     );
 });
 
@@ -134,7 +291,7 @@ var app = builder.Build();
 
 
 // =====================================================
-// SWAGGER MIDDLEWARE
+// SWAGGER
 // =====================================================
 
 app.UseSwagger();
@@ -151,10 +308,18 @@ app.UseSwaggerUI(options =>
 
 
 // =====================================================
+// CORS
+// =====================================================
+
+app.UseCors("AllowFrontend");
+
+
+// =====================================================
 // HTTPS
 // =====================================================
 
-app.UseHttpsRedirection();
+// Disabled for local development.
+// app.UseHttpsRedirection();
 
 
 // =====================================================
