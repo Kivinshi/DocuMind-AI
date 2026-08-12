@@ -1,7 +1,9 @@
 using System.Security.Claims;
+
 using DocuMindAI.Api.Data;
 using DocuMindAI.Api.Models;
 using DocuMindAI.Api.Services;
+
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -29,22 +31,48 @@ public class DocumentsController : ControllerBase
 
 
     // =====================================================
-    // GET ALL DOCUMENTS FOR CURRENT USER
-    // GET: /api/documents
+    // GET CURRENT USER ID
+    // =====================================================
+
+    private bool TryGetCurrentUserId(out int userId)
+    {
+        userId = 0;
+
+        // Standard ASP.NET Core claim
+        var userIdClaim =
+            User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        // Fallback: "sub"
+        if (string.IsNullOrWhiteSpace(userIdClaim))
+        {
+            userIdClaim =
+                User.FindFirstValue("sub");
+        }
+
+        // Fallback: "userId"
+        if (string.IsNullOrWhiteSpace(userIdClaim))
+        {
+            userIdClaim =
+                User.FindFirstValue("userId");
+        }
+
+        return int.TryParse(userIdClaim, out userId);
+    }
+
+
+    // =====================================================
+    // GET ALL DOCUMENTS
+    // GET: /api/Documents
     // =====================================================
 
     [HttpGet]
     public async Task<IActionResult> GetDocuments()
     {
         // -------------------------------------------------
-        // Get logged-in user ID from JWT
+        // Get current logged-in user
         // -------------------------------------------------
 
-        var userIdClaim = User.FindFirst(
-            ClaimTypes.NameIdentifier
-        )?.Value;
-
-        if (!int.TryParse(userIdClaim, out var userId))
+        if (!TryGetCurrentUserId(out var userId))
         {
             return Unauthorized(new
             {
@@ -54,19 +82,22 @@ public class DocumentsController : ControllerBase
 
 
         // -------------------------------------------------
-        // Get only this user's documents
+        // Get only current user's documents
         // -------------------------------------------------
 
         var documents = await _context.Documents
-            .Where(document => document.UserId == userId)
-            .OrderByDescending(document => document.UploadedAt)
+            .AsNoTracking()
+            .Where(document =>
+                document.UserId == userId)
+            .OrderByDescending(document =>
+                document.UploadedAt)
             .Select(document => new
             {
-                document.Id,
-                document.FileName,
-                document.FileUrl,
-                document.FileSize,
-                document.UploadedAt
+                id = document.Id,
+                fileName = document.FileName,
+                fileUrl = document.FileUrl,
+                fileSize = document.FileSize,
+                uploadedAt = document.UploadedAt
             })
             .ToListAsync();
 
@@ -77,21 +108,17 @@ public class DocumentsController : ControllerBase
 
     // =====================================================
     // GET SINGLE DOCUMENT
-    // GET: /api/documents/{id}
+    // GET: /api/Documents/{id}
     // =====================================================
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetDocument(int id)
     {
         // -------------------------------------------------
-        // Get logged-in user ID from JWT
+        // Get current user
         // -------------------------------------------------
 
-        var userIdClaim = User.FindFirst(
-            ClaimTypes.NameIdentifier
-        )?.Value;
-
-        if (!int.TryParse(userIdClaim, out var userId))
+        if (!TryGetCurrentUserId(out var userId))
         {
             return Unauthorized(new
             {
@@ -105,18 +132,18 @@ public class DocumentsController : ControllerBase
         // -------------------------------------------------
 
         var document = await _context.Documents
+            .AsNoTracking()
             .Where(document =>
                 document.Id == id &&
-                document.UserId == userId
-            )
+                document.UserId == userId)
             .Select(document => new
             {
-                document.Id,
-                document.FileName,
-                document.FileUrl,
-                document.FileSize,
-                document.ExtractedText,
-                document.UploadedAt
+                id = document.Id,
+                fileName = document.FileName,
+                fileUrl = document.FileUrl,
+                fileSize = document.FileSize,
+                extractedText = document.ExtractedText,
+                uploadedAt = document.UploadedAt
             })
             .FirstOrDefaultAsync();
 
@@ -136,7 +163,7 @@ public class DocumentsController : ControllerBase
 
     // =====================================================
     // UPLOAD DOCUMENT
-    // POST: /api/documents/upload
+    // POST: /api/Documents/upload
     // =====================================================
 
     [HttpPost("upload")]
@@ -144,15 +171,11 @@ public class DocumentsController : ControllerBase
     public async Task<IActionResult> UploadDocument(
         IFormFile file)
     {
-        // =================================================
-        // 1. GET CURRENT USER ID
-        // =================================================
+        // -------------------------------------------------
+        // Get current user
+        // -------------------------------------------------
 
-        var userIdClaim = User.FindFirst(
-            ClaimTypes.NameIdentifier
-        )?.Value;
-
-        if (!int.TryParse(userIdClaim, out var userId))
+        if (!TryGetCurrentUserId(out var userId))
         {
             return Unauthorized(new
             {
@@ -161,9 +184,9 @@ public class DocumentsController : ControllerBase
         }
 
 
-        // =================================================
-        // 2. CHECK FILE
-        // =================================================
+        // -------------------------------------------------
+        // Validate file
+        // -------------------------------------------------
 
         if (file == null || file.Length == 0)
         {
@@ -174,11 +197,12 @@ public class DocumentsController : ControllerBase
         }
 
 
-        // =================================================
-        // 3. CHECK FILE SIZE
-        // =================================================
+        // -------------------------------------------------
+        // Validate file size
+        // -------------------------------------------------
 
-        const long maxFileSize = 10 * 1024 * 1024;
+        const long maxFileSize =
+            10 * 1024 * 1024;
 
         if (file.Length > maxFileSize)
         {
@@ -189,42 +213,44 @@ public class DocumentsController : ControllerBase
         }
 
 
-        // =================================================
-        // 4. CHECK FILE EXTENSION
-        // =================================================
+        // -------------------------------------------------
+        // Validate extension
+        // -------------------------------------------------
 
-        var extension = Path
-            .GetExtension(file.FileName)
-            .ToLowerInvariant();
+        var extension =
+            Path.GetExtension(file.FileName)
+                .ToLowerInvariant();
 
         if (extension != ".pdf")
         {
             return BadRequest(new
             {
-                message = "Only PDF files are supported right now."
+                message =
+                    "Only PDF files are supported right now."
             });
         }
 
 
-        // =================================================
-        // 5. CHECK CONTENT TYPE
-        // =================================================
+        // -------------------------------------------------
+        // Validate content type
+        // -------------------------------------------------
 
         if (!string.Equals(
-            file.ContentType,
-            "application/pdf",
-            StringComparison.OrdinalIgnoreCase))
+                file.ContentType,
+                "application/pdf",
+                StringComparison.OrdinalIgnoreCase))
         {
             return BadRequest(new
             {
-                message = "Invalid PDF content type."
+                message =
+                    "Invalid PDF content type."
             });
         }
 
 
-        // =================================================
-        // 6. GENERATE UNIQUE STORAGE FILE ID
-        // =================================================
+        // -------------------------------------------------
+        // Generate unique file name
+        // -------------------------------------------------
 
         var tempFileId = Guid.NewGuid();
 
@@ -232,9 +258,9 @@ public class DocumentsController : ControllerBase
             $"{tempFileId}{extension}";
 
 
-        // =================================================
-        // 7. USER-SPECIFIC STORAGE PATH
-        // =================================================
+        // -------------------------------------------------
+        // User-specific storage path
+        // -------------------------------------------------
 
         var storagePath =
             $"users/{userId}/{tempFileId}/{storedFileName}";
@@ -246,20 +272,20 @@ public class DocumentsController : ControllerBase
         try
         {
             // =================================================
-            // 8. EXTRACT TEXT FROM PDF
+            // Extract PDF text
             // =================================================
 
             await using var extractionStream =
                 file.OpenReadStream();
 
             extractedText =
-                await _pdfTextExtractor.ExtractTextAsync(
-                    extractionStream
-                );
+                await _pdfTextExtractor
+                    .ExtractTextAsync(
+                        extractionStream);
 
 
             // =================================================
-            // 9. UPLOAD FILE TO SUPABASE STORAGE
+            // Upload to Supabase Storage
             // =================================================
 
             await using var uploadStream =
@@ -268,12 +294,11 @@ public class DocumentsController : ControllerBase
             await _storageService.UploadFileAsync(
                 uploadStream,
                 storagePath,
-                file.ContentType
-            );
+                file.ContentType);
 
 
             // =================================================
-            // 10. CREATE DATABASE RECORD
+            // Create database record
             // =================================================
 
             var document = new Document
@@ -293,7 +318,7 @@ public class DocumentsController : ControllerBase
 
 
             // =================================================
-            // 11. SAVE DOCUMENT TO DATABASE
+            // Save database record
             // =================================================
 
             _context.Documents.Add(document);
@@ -302,67 +327,79 @@ public class DocumentsController : ControllerBase
 
 
             // =================================================
-            // 12. RETURN SUCCESS RESPONSE
+            // Return response
             // =================================================
 
             return Ok(new
             {
-                message = "Document uploaded successfully.",
+                message =
+                    "Document uploaded successfully.",
 
                 document = new
                 {
-                    document.Id,
+                    id = document.Id,
 
-                    document.FileName,
+                    fileName = document.FileName,
 
-                    document.FileSize,
+                    fileUrl = document.FileUrl,
 
-                    document.UploadedAt,
+                    fileSize = document.FileSize,
+
+                    uploadedAt =
+                        document.UploadedAt,
 
                     extractedTextLength =
-                        document.ExtractedText.Length
+                        document.ExtractedText?.Length ?? 0
                 }
             });
         }
-        catch
+        catch (Exception ex)
         {
-            // =================================================
-            // CLEANUP STORAGE IF DATABASE SAVE FAILS
-            // =================================================
+            // -------------------------------------------------
+            // Cleanup Supabase file if database save fails
+            // -------------------------------------------------
 
             try
             {
-                await _storageService.RemoveFileAsync(
-                    storagePath
-                );
+                await _storageService
+                    .RemoveFileAsync(storagePath);
             }
             catch
             {
-                // Do not hide the original exception.
+                // Ignore cleanup error
             }
 
-            throw;
+
+            Console.WriteLine(
+                $"Document upload error: {ex}"
+            );
+
+
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new
+                {
+                    message =
+                        "An error occurred while uploading the document."
+                });
         }
     }
 
 
     // =====================================================
     // DELETE DOCUMENT
-    // DELETE: /api/documents/{id}
+    // DELETE: /api/Documents/{id}
     // =====================================================
 
     [HttpDelete("{id:int}")]
-    public async Task<IActionResult> DeleteDocument(int id)
+    public async Task<IActionResult> DeleteDocument(
+        int id)
     {
         // -------------------------------------------------
-        // Get logged-in user ID from JWT
+        // Get current user
         // -------------------------------------------------
 
-        var userIdClaim = User.FindFirst(
-            ClaimTypes.NameIdentifier
-        )?.Value;
-
-        if (!int.TryParse(userIdClaim, out var userId))
+        if (!TryGetCurrentUserId(out var userId))
         {
             return Unauthorized(new
             {
@@ -372,14 +409,14 @@ public class DocumentsController : ControllerBase
 
 
         // -------------------------------------------------
-        // Find document belonging to current user
+        // Find user's document
         // -------------------------------------------------
 
-        var document = await _context.Documents
-            .FirstOrDefaultAsync(document =>
-                document.Id == id &&
-                document.UserId == userId
-            );
+        var document =
+            await _context.Documents
+                .FirstOrDefaultAsync(document =>
+                    document.Id == id &&
+                    document.UserId == userId);
 
 
         if (document == null)
@@ -392,25 +429,32 @@ public class DocumentsController : ControllerBase
 
 
         // -------------------------------------------------
-        // Delete file from Supabase Storage first
+        // Delete Supabase Storage file
         // -------------------------------------------------
 
         try
         {
-            if (!string.IsNullOrWhiteSpace(document.FileUrl))
+            if (!string.IsNullOrWhiteSpace(
+                    document.FileUrl))
             {
-                await _storageService.RemoveFileAsync(
-                    document.FileUrl
-                );
+                await _storageService
+                    .RemoveFileAsync(
+                        document.FileUrl);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            return StatusCode(500, new
-            {
-                message =
-                    "Could not delete the document file from storage."
-            });
+            Console.WriteLine(
+                $"Storage delete error: {ex}"
+            );
+
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new
+                {
+                    message =
+                        "Could not delete the document file from storage."
+                });
         }
 
 
@@ -425,8 +469,8 @@ public class DocumentsController : ControllerBase
 
         return Ok(new
         {
-            message = "Document deleted successfully."
+            message =
+                "Document deleted successfully."
         });
     }
 }
-

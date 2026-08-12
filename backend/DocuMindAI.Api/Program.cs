@@ -25,6 +25,11 @@ var jwtSecret = configuration["Jwt:Secret"];
 var jwtIssuer = configuration["Jwt:Issuer"];
 var jwtAudience = configuration["Jwt:Audience"];
 
+
+// =====================================================
+// VALIDATE JWT CONFIGURATION
+// =====================================================
+
 if (string.IsNullOrWhiteSpace(jwtSecret))
 {
     throw new InvalidOperationException(
@@ -62,7 +67,7 @@ if (jwtKeyBytes.Length < 32)
 
 
 // =====================================================
-// DATABASE - SUPABASE POSTGRESQL
+// DATABASE - POSTGRESQL
 // =====================================================
 
 var connectionString =
@@ -219,9 +224,9 @@ builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddSwaggerGen(options =>
 {
-    // -------------------------------------------------
-    // Swagger Document
-    // -------------------------------------------------
+    // =================================================
+    // SWAGGER DOCUMENT
+    // =================================================
 
     options.SwaggerDoc(
         "v1",
@@ -234,9 +239,9 @@ builder.Services.AddSwaggerGen(options =>
     );
 
 
-    // -------------------------------------------------
-    // JWT Bearer Authentication
-    // -------------------------------------------------
+    // =================================================
+    // JWT BEARER AUTHENTICATION
+    // =================================================
 
     options.AddSecurityDefinition(
         "Bearer",
@@ -258,13 +263,9 @@ builder.Services.AddSwaggerGen(options =>
     );
 
 
-    // -------------------------------------------------
-    // JWT Security Requirement
-    // -------------------------------------------------
-    //
-    // IMPORTANT:
-    // Swashbuckle 10.x requires a function here.
-    //
+    // =================================================
+    // JWT SECURITY REQUIREMENT
+    // =================================================
 
     options.AddSecurityRequirement(
         document =>

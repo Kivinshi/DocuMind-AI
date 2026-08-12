@@ -1,90 +1,9 @@
-//using System.IdentityModel.Tokens.Jwt;
-//using System.Security.Claims;
-//using System.Text;
-//using DocuMindAI.Api.Models;
-//using Microsoft.IdentityModel.Tokens;
-
-//namespace DocuMindAI.Api.Services;
-
-//public class JwtService
-//{
-//    private readonly IConfiguration _configuration;
-
-//    public JwtService(IConfiguration configuration)
-//    {
-//        _configuration = configuration;
-//    }
-
-//    public string GenerateToken(User user)
-//    {
-//        var secret = _configuration["Jwt:Secret"];
-
-//        if (string.IsNullOrWhiteSpace(secret))
-//        {
-//            throw new InvalidOperationException(
-//                "JWT secret is not configured."
-//            );
-//        }
-
-//        var issuer = _configuration["Jwt:Issuer"];
-
-//        var audience = _configuration["Jwt:Audience"];
-
-//        var claims = new List<Claim>
-//        {
-//            new Claim(
-//                JwtRegisteredClaimNames.Sub,
-//                user.Id.ToString()
-//            ),
-
-//            new Claim(
-//                JwtRegisteredClaimNames.Email,
-//                user.Email
-//            ),
-
-//            new Claim(
-//                ClaimTypes.NameIdentifier,
-//                user.Id.ToString()
-//            ),
-
-//            new Claim(
-//                ClaimTypes.Email,
-//                user.Email
-//            ),
-
-//            new Claim(
-//                "plan",
-//                user.PlanType
-//            )
-//        };
-
-//        var key = new SymmetricSecurityKey(
-//            Encoding.UTF8.GetBytes(secret)
-//        );
-
-//        var credentials = new SigningCredentials(
-//            key,
-//            SecurityAlgorithms.HmacSha256
-//        );
-
-//        var token = new JwtSecurityToken(
-//            issuer: issuer,
-//            audience: audience,
-//            claims: claims,
-//            expires: DateTime.UtcNow.AddHours(24),
-//            signingCredentials: credentials
-//        );
-
-//        return new JwtSecurityTokenHandler()
-//            .WriteToken(token);
-//    }
-//}
-
-
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+
 using DocuMindAI.Api.Models;
+
 using Microsoft.IdentityModel.Tokens;
 
 namespace DocuMindAI.Api.Services;
@@ -134,7 +53,7 @@ public class JwtService
         }
 
         // =====================================================
-        // JWT SECRET MUST BE STRONG ENOUGH
+        // SECRET
         // =====================================================
 
         var keyBytes = Encoding.UTF8.GetBytes(secret);
@@ -146,7 +65,8 @@ public class JwtService
             );
         }
 
-        var key = new SymmetricSecurityKey(keyBytes);
+        var securityKey =
+            new SymmetricSecurityKey(keyBytes);
 
         // =====================================================
         // CLAIMS
@@ -154,8 +74,10 @@ public class JwtService
 
         var claims = new List<Claim>
         {
+            // Custom user ID claim.
+            // This avoids claim-mapping problems.
             new Claim(
-                ClaimTypes.NameIdentifier,
+                "userId",
                 user.Id.ToString()
             ),
 
@@ -176,22 +98,24 @@ public class JwtService
         };
 
         // =====================================================
-        // CREDENTIALS
+        // SIGNING CREDENTIALS
         // =====================================================
 
-        var credentials = new SigningCredentials(
-            key,
-            SecurityAlgorithms.HmacSha256
-        );
+        var credentials =
+            new SigningCredentials(
+                securityKey,
+                SecurityAlgorithms.HmacSha256
+            );
 
         // =====================================================
-        // TOKEN
+        // CREATE JWT
         // =====================================================
 
         var token = new JwtSecurityToken(
             issuer: issuer,
             audience: audience,
             claims: claims,
+            notBefore: DateTime.UtcNow,
             expires: DateTime.UtcNow.AddDays(7),
             signingCredentials: credentials
         );
